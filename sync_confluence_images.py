@@ -47,20 +47,25 @@ since = (datetime.date.today() - datetime.timedelta(days=DAYS)).isoformat()
 cql = ('type = page AND lastmodified >= "%s" AND space in ("%s") AND (%s) ORDER BY lastmodified DESC'
        % (since, '","'.join(SPACES), " OR ".join('title ~ "%s"' % w for w in WORDS)))
 p(cql)
-pages, seen, start = [], set(), 0
-while start < 500:
-    r = get(BASE + "/wiki/rest/api/content/search", params={"cql": cql, "limit": 25, "start": start, "expand": "version,space"})
+pages, seen = [], set()
+url = BASE + "/wiki/rest/api/content/search"
+params = {"cql": cql, "limit": 25, "expand": "version,space"}
+while url and len(pages) < 600:
+    r = get(url, params=params)
+    params = None
     if not r:
         break
-    res = r.json()["results"]
+    j = r.json()
+    res = j["results"]
     new = [x for x in res if x["id"] not in seen]
-    p("search start", start, "got", len(res), "new", len(new))
+    p("search got", len(res), "new", len(new))
     if not new:
         break
     for x in new:
         seen.add(x["id"])
     pages += new
-    start += 25
+    nxt = j.get("_links", {}).get("next")
+    url = (BASE + "/wiki" + nxt) if nxt else None
 p("pages", len(pages))
 n_new = 0
 for k, pg in enumerate(pages):
