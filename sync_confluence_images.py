@@ -13,6 +13,7 @@ WORDS = ["시안", "리뷰", "샘플", "최종", "디자인", "품평"]
 MIN_BYTES = 120_000
 MAX_BYTES = 30_000_000
 MAX_PER_PAGE = 3
+MAX_NEW = 150
 OK = ("image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp", "image/tiff")
 os.makedirs("b", exist_ok=True)
 
@@ -32,31 +33,39 @@ def save():
 def get(url, **kw):
     for i in range(3):
         try:
-            r = requests.get(url, auth=AUTH, timeout=60, **kw)
+            r = requests.get(url, auth=AUTH, timeout=40, **kw)
             if r.status_code == 200:
                 return r
-            p("http", r.status_code, url[:90])
+            p("http", r.status_code, url[:90], r.text[:200])
         except Exception as e:
             p("err", e)
         time.sleep(2)
     return None
 
+p("start days", DAYS)
 since = (datetime.date.today() - datetime.timedelta(days=DAYS)).isoformat()
 cql = ('type = page AND lastmodified >= "%s" AND space in ("%s") AND (%s) ORDER BY lastmodified DESC'
        % (since, '","'.join(SPACES), " OR ".join('title ~ "%s"' % w for w in WORDS)))
-pages, start = [], 0
-while True:
-    r = get(BASE + "/wiki/rest/api/content/search", params={"cql": cql, "limit": 50, "start": start, "expand": "version,space"})
+p(cql)
+pages, seen, start = [], set(), 0
+while start < 500:
+    r = get(BASE + "/wiki/rest/api/content/search", params={"cql": cql, "limit": 25, "start": start, "expand": "version,space"})
     if not r:
         break
-    j = r.json()
-    pages += j["results"]
-    if len(j["results"]) < 50:
+    res = r.json()["results"]
+    new = [x for x in res if x["id"] not in seen]
+    p("search start", start, "got", len(res), "new", len(new))
+    if not new:
         break
-    start += 50
+    for x in new:
+        seen.add(x["id"])
+    pages += new
+    start += 25
 p("pages", len(pages))
 n_new = 0
-for pg in pages:
+for k, pg in enumerate(pages):
+    if n_new >= MAX_NEW:
+        break
     pid = pg["id"]
     try:
         ent = index.get(pid) or {"title": pg["title"], "space": pg["space"]["key"], "modified": pg["version"]["when"],
@@ -69,6 +78,7 @@ for pg in pages:
         atts = [a for a in r.json()["results"]
                 if a["extensions"].get("mediaType") in OK and MIN_BYTES <= a["extensions"].get("fileSize", 0) <= MAX_BYTES]
         atts.sort(key=lambda a: -a["extensions"]["fileSize"])
+        p("page", k + 1, "/", len(pages), pg["title"][:30], "cands", len(atts))
         for a in atts[:MAX_PER_PAGE]:
             aid = "%s_v%s" % (a["id"], a["version"]["number"])
             if aid in have:
